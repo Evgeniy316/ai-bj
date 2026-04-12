@@ -42,7 +42,7 @@ class AdvancedBlackjackEnv(gym.Env):
 
         self.action_space      = spaces.Discrete(4)
         self.observation_space = spaces.Box(
-            low=0.0, high=1.0, shape=(3,), dtype=np.float32
+            low=0.0, high=1.0, shape=(4,), dtype=np.float32
         )
 
         # Hand / split bookkeeping
@@ -59,14 +59,21 @@ class AdvancedBlackjackEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_state(self) -> np.ndarray:
-        player_sum     = self._calculate_hand(self.player_hand)
-        dealer_upcard  = self.dealer_hand[0]
-        usable_ace     = 1.0 if self._has_usable_ace(self.player_hand) else 0.0
+        player_sum    = self._calculate_hand(self.player_hand)
+        dealer_upcard = self.dealer_hand[0]
+        usable_ace    = 1.0 if self._has_usable_ace(self.player_hand) else 0.0
 
-        player_sum_norm   = (player_sum    - 4)  / (21 - 4)   # [4,21]  → [0,1]
-        dealer_upcard_norm = (dealer_upcard - 2)  / (11 - 2)  # [2,11]  → [0,1]
+        player_sum_norm    = (player_sum    - 4)  / (21 - 4)
+        dealer_upcard_norm = (dealer_upcard - 2)  / (11 - 2)
 
-        return np.array([player_sum_norm, dealer_upcard_norm, usable_ace],
+        # Replace binary is_pair with the actual pair card value (0 if not a pair)
+        pair_card_norm = 0.0
+        if (len(self.player_hand) == 2
+                and self.player_hand[0] == self.player_hand[1]
+                and not self.split_in_progress):
+            pair_card_norm = (self.player_hand[0] - 2) / (11 - 2)  # 2–11 → 0–1
+
+        return np.array([player_sum_norm, dealer_upcard_norm, usable_ace, pair_card_norm],
                         dtype=np.float32)
 
     # ------------------------------------------------------------------

@@ -56,17 +56,15 @@ if __name__ == "__main__":
         learning_rate=3e-4,
         n_steps=1024,
         batch_size=256,
-        n_epochs=4,
+        n_epochs=10,
         gamma=1.0,
         gae_lambda=0.95,
         clip_range=0.2,
         ent_coef=0.02,
         policy_kwargs=dict(
-            net_arch=dict(
-                pi=[256, 256],
-                vf=[512, 512],
-            )
-        ),
+    net_arch=dict(pi=[128, 64], 
+                  vf=[128, 64])
+    ),
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
 
@@ -76,10 +74,11 @@ if __name__ == "__main__":
         eval_env,
         best_model_save_path="./logs/best_model/",
         log_path="./logs/results/",
-        eval_freq=50_000,
-        n_eval_episodes=2000,
+        eval_freq=200_000,
+        n_eval_episodes=5000,
         deterministic=True,
         use_masking=True,
+        # reward_threshold=-0.05,
     )
 
     checkpoint_callback = CheckpointCallback(
