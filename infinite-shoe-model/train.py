@@ -8,8 +8,16 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import CheckpointCallback
 from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
-
+from pause import KeyboardPauseCallback
 from timer import EpochTimerCallback
+import math
+
+def cosine_schedule(start: float, end: float):
+    def schedule(progress_remaining: float) -> float:
+        # progress_remaining: 1.0 (start) → 0.0 (end)
+        cosine_factor = 0.5 * (1 + math.cos(math.pi * (1 - progress_remaining)))
+        return end + (start - end) * cosine_factor
+    return schedule
 
 torch.set_num_threads(1)
 
@@ -45,6 +53,8 @@ def make_eval_env():
 
 if __name__ == "__main__":
     num_cpu = 8
+    pause_callback = KeyboardPauseCallback()
+
 
     vec_env  = SubprocVecEnv([make_env() for _ in range(num_cpu)])
     eval_env = DummyVecEnv([make_eval_env])
@@ -62,8 +72,8 @@ if __name__ == "__main__":
         clip_range=0.2,
         ent_coef=0.02,
         policy_kwargs=dict(
-    net_arch=dict(pi=[128, 64], 
-                  vf=[128, 64])
+    net_arch=dict(pi=[128, 128], 
+                  vf=[128, 128])
     ),
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
@@ -91,7 +101,7 @@ if __name__ == "__main__":
 
     model.learn(
         total_timesteps=5_000_000,
-        callback=[timer_callback, eval_callback, checkpoint_callback],
+        callback=[timer_callback, eval_callback, checkpoint_callback, pause_callback],
     )
 
     model.save("blackjack_infinite_shoe_model")

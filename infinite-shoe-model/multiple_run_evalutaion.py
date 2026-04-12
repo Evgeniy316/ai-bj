@@ -1,17 +1,115 @@
+import os
+import sys
+import ctypes
+from ctypes import wintypes
+from multiprocessing import Pool, freeze_support
+
+# Keep native CPU libraries from spawning extra threads
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import numpy as np
-from multiprocessing import Pool
+import torch
 from sb3_contrib import MaskablePPO
 from model import AdvancedBlackjackEnv
 from tqdm import tqdm
 
-
 # ─────────────────────────────────────────────
 #  CONFIG  (edit these)
 # ─────────────────────────────────────────────
-MODEL_PATH       = "blackjack_infinite_shoe_model.zip"
-NUM_RUNS         = 5         # concurrent runs (one run = one core)
-EPISODES_PER_RUN = 100_000    # episodes each core plays
+MODEL_PATH = "blackjack_infinite_shoe_model.zip"
+NUM_RUNS = 5              # concurrent runs (one run = one worker process)
+EPISODES_PER_RUN = 100_000
+CPU_HARD_CAP_PERCENT = 50  # total CPU cap for the whole process tree
 # ─────────────────────────────────────────────
+
+# Keep PyTorch single-threaded on CPU
+torch.set_num_threads(1)
+try:
+    torch.set_num_interop_threads(1)
+except RuntimeError:
+    # Safe fallback if something imported torch parallelism already.
+    pass
+
+_CPU_JOB_HANDLE = None
+
+if os.name == "nt":
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    # Win32 constants
+    JOB_OBJECT_CPU_RATE_CONTROL_ENABLE = 0x1
+    JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP = 0x4
+    JobObjectCpuRateControlInformation = 15
+
+    class JOBOBJECT_CPU_RATE_CONTROL_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("ControlFlags", wintypes.DWORD),
+            ("CpuRate", wintypes.DWORD),
+        ]
+
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+    ]
+
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetCurrentProcess.argtypes = []
+
+    def _raise_last_error(prefix: str) -> None:
+        err = ctypes.get_last_error()
+        raise OSError(err, f"{prefix} failed (WinError {err})")
+
+    def set_cpu_hard_cap(percent: int) -> wintypes.HANDLE:
+        """
+        Hard-cap the current process tree on Windows.
+        percent must be 1..100
+        """
+        if not (1 <= int(percent) <= 100):
+            raise ValueError("CPU_HARD_CAP_PERCENT must be between 1 and 100")
+
+        h_job = kernel32.CreateJobObjectW(None, None)
+        if not h_job:
+            _raise_last_error("CreateJobObjectW")
+
+        info = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION()
+        info.ControlFlags = (
+            JOB_OBJECT_CPU_RATE_CONTROL_ENABLE
+            | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP
+        )
+        # Microsoft: CpuRate is percentage * 100, so 30% => 3000
+        info.CpuRate = int(percent) * 100
+
+        ok = kernel32.SetInformationJobObject(
+            h_job,
+            JobObjectCpuRateControlInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok:
+            _raise_last_error("SetInformationJobObject")
+
+        ok = kernel32.AssignProcessToJobObject(h_job, kernel32.GetCurrentProcess())
+        if not ok:
+            _raise_last_error("AssignProcessToJobObject")
+
+        return h_job
+else:
+    def set_cpu_hard_cap(percent: int):
+        return None
 
 
 def calculate_hand_value(hand):
@@ -43,37 +141,43 @@ def safe_int_action(action):
 def run_episodes(args):
     model_path, num_episodes, run_id = args
 
-    env   = AdvancedBlackjackEnv()
+    env = AdvancedBlackjackEnv()
     model = MaskablePPO.load(model_path)
 
     action_map = {0: "Stand", 1: "Hit", 2: "Double", 3: "Split"}
 
     stats = dict(
-        run_id              = run_id,
-        count               = 0,
-        total_reward        = 0.0,
-        wins                = 0,
-        natural_bj          = 0,
-        losses              = 0,
-        pushes              = 0,
-        total_splits        = 0,
-        ace_splits          = 0,
-        non_ace_split_pairs = {},
+        run_id=run_id,
+        count=0,
+        total_reward=0.0,
+        wins=0,
+        natural_bj=0,
+        losses=0,
+        pushes=0,
+        total_splits=0,
+        ace_splits=0,
+        non_ace_split_pairs={},
     )
 
-    for _ in tqdm(range(num_episodes),
-                  desc=f"  run {run_id + 1}",
-                  position=run_id,
-                  leave=True):
-
-        obs, _       = env.reset()
-        done         = False
+    for _ in tqdm(
+        range(num_episodes),
+        desc=f"  run {run_id + 1}",
+        position=run_id,
+        leave=True,
+    ):
+        obs, _ = env.reset()
+        done = False
         initial_hand = list(env.player_hand)
 
         while not done:
-            masks  = env.action_masks()
-            masks  = masks[0] if masks.ndim == 2 else masks
-            action, _ = model.predict(obs, action_masks=masks, deterministic=True)
+            masks = env.action_masks()
+            masks = masks[0] if getattr(masks, "ndim", 1) == 2 else masks
+
+            action, _ = model.predict(
+                obs,
+                action_masks=masks,
+                deterministic=True,
+            )
             action = safe_int_action(action)
 
             if action_map.get(action) == "Split":
@@ -90,12 +194,16 @@ def run_episodes(args):
             obs, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
 
-        stats["count"]        += 1
+        stats["count"] += 1
         stats["total_reward"] += float(reward)
-        if   reward == 1.5: stats["natural_bj"] += 1
-        elif reward  >  0:  stats["wins"]       += 1
-        elif reward  <  0:  stats["losses"]     += 1
-        else:               stats["pushes"]     += 1
+        if reward == 1.5:
+            stats["natural_bj"] += 1
+        elif reward > 0:
+            stats["wins"] += 1
+        elif reward < 0:
+            stats["losses"] += 1
+        else:
+            stats["pushes"] += 1
 
     return stats
 
@@ -105,19 +213,25 @@ def run_episodes(args):
 # ─────────────────────────────────────────────
 def merge_stats(run_list):
     merged = dict(
-        count=0, total_reward=0.0,
-        wins=0, natural_bj=0, losses=0, pushes=0,
-        total_splits=0, ace_splits=0, non_ace_split_pairs={},
+        count=0,
+        total_reward=0.0,
+        wins=0,
+        natural_bj=0,
+        losses=0,
+        pushes=0,
+        total_splits=0,
+        ace_splits=0,
+        non_ace_split_pairs={},
     )
     for s in run_list:
-        merged["count"]        += s["count"]
+        merged["count"] += s["count"]
         merged["total_reward"] += s["total_reward"]
-        merged["wins"]         += s["wins"]
-        merged["natural_bj"]   += s["natural_bj"]
-        merged["losses"]       += s["losses"]
-        merged["pushes"]       += s["pushes"]
+        merged["wins"] += s["wins"]
+        merged["natural_bj"] += s["natural_bj"]
+        merged["losses"] += s["losses"]
+        merged["pushes"] += s["pushes"]
         merged["total_splits"] += s["total_splits"]
-        merged["ace_splits"]   += s["ace_splits"]
+        merged["ace_splits"] += s["ace_splits"]
         for k, v in s["non_ace_split_pairs"].items():
             merged["non_ace_split_pairs"][k] = (
                 merged["non_ace_split_pairs"].get(k, 0) + v
@@ -129,18 +243,18 @@ def merge_stats(run_list):
 #  Pretty printer
 # ─────────────────────────────────────────────
 def print_report(stats, label=""):
-    N              = stats["count"]
-    avg_reward     = stats["total_reward"] / N
-    wins           = stats["wins"]
-    natural_bj     = stats["natural_bj"]
-    losses         = stats["losses"]
-    pushes         = stats["pushes"]
-    total_splits   = stats["total_splits"]
-    ace_splits     = stats["ace_splits"]
+    N = stats["count"]
+    avg_reward = stats["total_reward"] / N
+    wins = stats["wins"]
+    natural_bj = stats["natural_bj"]
+    losses = stats["losses"]
+    pushes = stats["pushes"]
+    total_splits = stats["total_splits"]
+    ace_splits = stats["ace_splits"]
     non_ace_splits = total_splits - ace_splits
-    pairs          = stats["non_ace_split_pairs"]
+    pairs = stats["non_ace_split_pairs"]
 
-    header = f"BLACKJACK MODEL PERFORMANCE ANALYSIS"
+    header = "BLACKJACK MODEL PERFORMANCE ANALYSIS"
     if label:
         header += f"  [{label}]"
 
@@ -150,18 +264,18 @@ def print_report(stats, label=""):
     print("=" * 60)
     print(f"Episodes analyzed          : {N:,}")
     print(f"Average reward per hand    : {avg_reward:+.5f}  ({avg_reward*100:+.3f}% house edge)")
-    print(f"Player advantage hands     : {(wins+natural_bj)/N*100:5.2f}%  (Win + Natural BJ)")
-    print(f"Regular win rate           : {wins/N*100:5.2f}%")
-    print(f"Natural Blackjack rate     : {natural_bj/N*100:5.2f}%")
-    print(f"Loss rate                  : {losses/N*100:5.2f}%")
-    print(f"Push rate                  : {pushes/N*100:5.2f}%")
+    print(f"Player advantage hands     : {(wins + natural_bj) / N * 100:5.2f}%  (Win + Natural BJ)")
+    print(f"Regular win rate           : {wins / N * 100:5.2f}%")
+    print(f"Natural Blackjack rate     : {natural_bj / N * 100:5.2f}%")
+    print(f"Loss rate                  : {losses / N * 100:5.2f}%")
+    print(f"Push rate                  : {pushes / N * 100:5.2f}%")
     print("-" * 60)
-    print(f"\nSPLIT BEHAVIOR")
-    print(f"Total splits performed     : {total_splits} ({total_splits/N*100:.2f}% of all hands)")
+    print("\nSPLIT BEHAVIOR")
+    print(f"Total splits performed     : {total_splits} ({total_splits / N * 100:.2f}% of all hands)")
 
     if total_splits > 0:
-        print(f"→ Aces only                : {ace_splits} ({ace_splits/total_splits*100:.1f}% of splits)")
-        print(f"→ Non-ace pairs            : {non_ace_splits} ({non_ace_splits/total_splits*100:.1f}% of splits)")
+        print(f"→ Aces only                : {ace_splits} ({ace_splits / total_splits * 100:.1f}% of splits)")
+        print(f"→ Non-ace pairs            : {non_ace_splits} ({non_ace_splits / total_splits * 100:.1f}% of splits)")
     else:
         print("→ No splits detected")
 
@@ -179,27 +293,36 @@ def print_report(stats, label=""):
 #  Main
 # ─────────────────────────────────────────────
 def main():
-    print(f"Launching {NUM_RUNS} concurrent runs "
-          f"({EPISODES_PER_RUN:,} episodes each) ...")
+    global _CPU_JOB_HANDLE
+
+    if os.name == "nt":
+        _CPU_JOB_HANDLE = set_cpu_hard_cap(CPU_HARD_CAP_PERCENT)
+        print(f"Windows CPU hard cap enabled: {CPU_HARD_CAP_PERCENT}%")
+
+    print(
+        f"Launching {NUM_RUNS} concurrent runs "
+        f"({EPISODES_PER_RUN:,} episodes each) ..."
+    )
 
     worker_args = [
         (MODEL_PATH, EPISODES_PER_RUN, run_id)
         for run_id in range(NUM_RUNS)
     ]
 
-    # NUM_RUNS workers run fully in parallel; results arrive when ALL finish
     with Pool(processes=NUM_RUNS) as pool:
         all_stats = pool.map(run_episodes, worker_args)
 
-    # ── Print individual run results ──────────────────────────
     for stats in all_stats:
         print_report(stats, label=f"Run {stats['run_id'] + 1}")
 
-    # ── Print combined summary ────────────────────────────────
     if NUM_RUNS > 1:
         combined = merge_stats(all_stats)
-        print_report(combined, label=f"All {NUM_RUNS} runs combined  —  {combined['count']:,} episodes total")
+        print_report(
+            combined,
+            label=f"All {NUM_RUNS} runs combined  —  {combined['count']:,} episodes total",
+        )
 
 
 if __name__ == "__main__":
+    freeze_support()
     main()
