@@ -146,4 +146,7 @@ def test_and_save_logs(model_path, num_episodes=50000, output_file="blackjack_lo
 
 if __name__ == "__main__":
     import pandas as pd  # Add this import at the top
-    test_and_save_logs("blackjack_infinite_shoe_model.zip")
+    # test_and_save_logs("blackjack_infinite_shoe_model.zip")
+    test_and_save_logs("../../../blackjack_infinite_shoe_model.zip")
+
+    # ..\..\blackjack_infinite_shoe_model.zip

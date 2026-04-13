@@ -10,6 +10,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from pause import KeyboardPauseCallback
 from timer import EpochTimerCallback
+from entropy import EntropyScheduleCallback
 import math
 
 def cosine_schedule(start: float, end: float):
@@ -98,10 +99,10 @@ if __name__ == "__main__":
     )
 
     print("Starting training (infinite-shoe)...")
-
+    entropy_callback = EntropyScheduleCallback(ent_start=0.02, ent_end=0.002)
     model.learn(
         total_timesteps=5_000_000,
-        callback=[timer_callback, eval_callback, checkpoint_callback, pause_callback],
+        callback=[timer_callback, eval_callback, checkpoint_callback,entropy_callback],
     )
 
     model.save("blackjack_infinite_shoe_model")
