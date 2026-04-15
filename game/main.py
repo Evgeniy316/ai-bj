@@ -26,20 +26,19 @@ app = FastAPI(title="Blackjack API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],    # Nuxt dev server
+    allow_origins=["http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 # ── request schemas ───────────────────────────────────────────
-class CreateSessionRequest(BaseModel):
-    starting_balance: float = Field(default=1000.0, gt=0)
+class SessionRequest(BaseModel):
+    session_id: str
 
-class StartRoundRequest(BaseModel):
-    bet: float = Field(gt=0)
 
 class ActionRequest(BaseModel):
+    session_id: str
     action: str = Field(description="hit | stand | double | split")
 
 
@@ -54,38 +53,25 @@ def _get_session(session_id: str) -> PlayerSession:
 # ── endpoints ─────────────────────────────────────────────────
 
 @app.post("/session", summary="Create a player session")
-def create_session(body: CreateSessionRequest):
-    """
-    Call once when the player opens the game.
-    Returns a session_id — store it on the frontend for all subsequent requests.
-    """
-    session_id            = str(uuid.uuid4())
-    sessions[session_id]  = PlayerSession(starting_balance=body.starting_balance)
-    return {
-        "session_id": session_id,
-        "balance":    body.starting_balance,
-    }
+def create_session():
+    session_id = str(uuid.uuid4())
+    sessions[session_id] = PlayerSession()
+    return {"session_id": session_id}
 
 
-@app.post("/session/{session_id}/round/start", summary="Deal a new round")
-def start_round(session_id: str, body: StartRoundRequest):
-    """Start a new round within an existing session."""
-    session = _get_session(session_id)
+@app.post("/round/start", summary="Deal a new round")
+def start_round(body: SessionRequest):
+    session = _get_session(body.session_id)
     try:
-        state = session.start_round(bet=body.bet)
+        state = session.start_round()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return state
 
 
-@app.post("/session/{session_id}/round/action", summary="Send a player action")
-def take_action(session_id: str, body: ActionRequest):
-    """
-    Valid actions: hit | stand | double | split
-    Returns updated state + new suggestion.
-    When round.round_over is true, balance has already been settled.
-    """
-    session = _get_session(session_id)
+@app.post("/round/action", summary="Send a player action")
+def take_action(body: ActionRequest):
+    session = _get_session(body.session_id)
     try:
         state = session.action(body.action)
     except ValueError as e:
@@ -93,18 +79,22 @@ def take_action(session_id: str, body: ActionRequest):
     return state
 
 
-@app.get("/session/{session_id}", summary="Get current session state")
-def get_state(session_id: str):
-    """Reconnect a client that lost state — returns full session snapshot."""
-    session = _get_session(session_id)
+@app.post("/session/state", summary="Get current session state")
+def get_state(body: SessionRequest):
+    session = _get_session(body.session_id)
     return session.get_state()
 
 
-@app.delete("/session/{session_id}", summary="End the session")
-def delete_session(session_id: str):
-    """Call when the player closes the game."""
-    sessions.pop(session_id, None)
+@app.delete("/session", summary="End the session")
+def delete_session(body: SessionRequest):
+    sessions.pop(body.session_id, None)
     return {"ok": True}
+
+
+@app.post("/session/history", summary="Get round history")
+def get_history(body: SessionRequest):
+    session = _get_session(body.session_id)
+    return session.get_history()
 
 
 @app.get("/health")

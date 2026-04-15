@@ -1,27 +1,33 @@
 import random
 from dataclasses import dataclass
+from typing import TypedDict
 from advisor import calculate_hand, get_advice
+
+# ── card type ─────────────────────────────────────────────────
+class Card(TypedDict):
+    rank: int
+    suit: str
 
 # ── infinite shoe ─────────────────────────────────────────────
 _RANKS   = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 _WEIGHTS = [1, 1, 1, 1, 1, 1, 1, 1,  4,  1]
+_SUITS   = ["♠", "♥", "♦", "♣"]
 
-def _draw() -> int:
-    return random.choices(_RANKS, weights=_WEIGHTS, k=1)[0]
+def _draw() -> Card:
+    rank = random.choices(_RANKS, weights=_WEIGHTS, k=1)[0]
+    suit = random.choice(_SUITS)
+    return {"rank": rank, "suit": suit}
 
 
 # ── single round ──────────────────────────────────────────────
 class BlackjackGame:
-    def __init__(self, bet: float) -> None:
-        self.base_bet          = bet
-        self.player_hands:     list[list[int]] = [[_draw(), _draw()]]
-        self.dealer_hand:      list[int]       = [_draw(), _draw()]
-        self.bets:             list[float]     = [bet]
-        self.current_hand_idx: int             = 0
-        self.split_in_progress: bool           = False
-        self.round_over:        bool           = False
-        self.results:          list[str]       = []
-        self.payouts:          list[float]     = []
+    def __init__(self) -> None:
+        self.player_hands:      list[list[Card]] = [[_draw(), _draw()]]
+        self.dealer_hand:       list[Card]       = [_draw(), _draw()]
+        self.current_hand_idx:  int              = 0
+        self.split_in_progress: bool             = False
+        self.round_over:        bool             = False
+        self.results:           list[str]        = []
 
     def action(self, action_name: str) -> None:
         if self.round_over:
@@ -44,16 +50,14 @@ class BlackjackGame:
 
         elif name == "double":
             hand.append(_draw())
-            self.bets[self.current_hand_idx] *= 2
             self._advance()
 
         elif name == "split":
-            c  = hand[0]
-            h1 = [c, _draw()]
-            h2 = [c, _draw()]
+            c  = hand[0]["rank"]
+            h1 = [{"rank": c, "suit": hand[0]["suit"]}, _draw()]
+            h2 = [{"rank": c, "suit": hand[1]["suit"]}, _draw()]
             self.player_hands[self.current_hand_idx] = h1
             self.player_hands.insert(self.current_hand_idx + 1, h2)
-            self.bets.insert(self.current_hand_idx + 1, self.base_bet)
             self.split_in_progress = True
 
     def _advance(self) -> None:
@@ -69,9 +73,8 @@ class BlackjackGame:
 
         dealer_total = calculate_hand(self.dealer_hand)
 
-        for idx, hand in enumerate(self.player_hands):
+        for hand in self.player_hands:
             player_total = calculate_hand(hand)
-            bet          = self.bets[idx]
 
             if (not self.split_in_progress
                     and len(self.player_hands) == 1
@@ -79,26 +82,20 @@ class BlackjackGame:
                     and player_total == 21):
                 if dealer_total == 21 and len(self.dealer_hand) == 2:
                     self.results.append("push")
-                    self.payouts.append(0.0)
                 else:
                     self.results.append("blackjack")
-                    self.payouts.append(round(bet * 1.5, 2))
 
             elif player_total > 21:
                 self.results.append("bust")
-                self.payouts.append(-bet)
 
             elif dealer_total > 21 or player_total > dealer_total:
                 self.results.append("win")
-                self.payouts.append(bet)
 
             elif player_total == dealer_total:
                 self.results.append("push")
-                self.payouts.append(0.0)
 
             else:
                 self.results.append("loss")
-                self.payouts.append(-bet)
 
         self.round_over = True
 
@@ -109,7 +106,7 @@ class BlackjackGame:
         actions = ["hit", "stand"]
         if len(hand) == 2:
             actions.append("double")
-        if len(hand) == 2 and hand[0] == hand[1] and not self.split_in_progress:
+        if len(hand) == 2 and hand[0]["rank"] == hand[1]["rank"] and not self.split_in_progress:
             actions.append("split")
         return actions
 
@@ -119,7 +116,9 @@ class BlackjackGame:
             valid_actions = []
         else:
             active_hand   = self.player_hands[self.current_hand_idx]
-            suggestion    = get_advice(active_hand, self.dealer_hand[0], self.split_in_progress)
+            active_ranks  = [card["rank"] for card in active_hand]
+            dealer_upcard = self.dealer_hand[0]["rank"]
+            suggestion    = get_advice(active_ranks, dealer_upcard, self.split_in_progress)
             valid_actions = self._valid_actions()
 
         return {
@@ -129,14 +128,11 @@ class BlackjackGame:
             "dealer_upcard":     self.dealer_hand[0],
             "dealer_hand":       self.dealer_hand if self.round_over else None,
             "dealer_total":      calculate_hand(self.dealer_hand) if self.round_over else None,
-            "bets":              self.bets,
             "split_in_progress": self.split_in_progress,
             "valid_actions":     valid_actions,
             "suggestion":        suggestion,
             "round_over":        self.round_over,
-            "results":           self.results  if self.round_over else None,
-            "payouts":           self.payouts  if self.round_over else None,
-            "net":               round(sum(self.payouts), 2) if self.round_over else None,
+            "results":           self.results if self.round_over else None,
         }
 
 
@@ -144,30 +140,22 @@ class BlackjackGame:
 @dataclass
 class RoundSummary:
     results: list[str]
-    net:     float
-    bet:     float
-    hands:   list[list[int]]
-    dealer:  list[int]
+    hands:   list[list[Card]]
+    dealer:  list[Card]
 
 
 class PlayerSession:
-    def __init__(self, starting_balance: float = 1000.0) -> None:
-        self.balance:       float                    = starting_balance
-        self.history:       list[RoundSummary]       = []
-        self.current_round: BlackjackGame | None     = None
+    def __init__(self) -> None:
+        self.history:       list[RoundSummary]   = []
+        self.current_round: BlackjackGame | None = None
 
     # ── public API ────────────────────────────────────────────
 
-    def start_round(self, bet: float) -> dict:
-        if bet <= 0:
-            raise ValueError("Bet must be positive.")
-        if bet > self.balance:
-            raise ValueError(f"Bet {bet} exceeds balance {self.balance}.")
+    def start_round(self) -> dict:
         if self.current_round and not self.current_round.round_over:
             raise ValueError("Finish the current round before starting a new one.")
 
-        self.balance       = round(self.balance - bet, 2)
-        self.current_round = BlackjackGame(bet=bet)
+        self.current_round = BlackjackGame()
         return self._response()
 
     def action(self, action_name: str) -> dict:
@@ -176,15 +164,9 @@ class PlayerSession:
 
         self.current_round.action(action_name)
 
-        # Settle balance and record history when round ends
         if self.current_round.round_over:
-            net          = sum(self.current_round.payouts)
-            # Return the original bet + winnings (bet was deducted on start_round)
-            self.balance = round(self.balance + self.current_round.base_bet + net, 2)
             self.history.append(RoundSummary(
                 results = self.current_round.results,
-                net     = round(net, 2),
-                bet     = self.current_round.base_bet,
                 hands   = [list(h) for h in self.current_round.player_hands],
                 dealer  = list(self.current_round.dealer_hand),
             ))
@@ -194,21 +176,25 @@ class PlayerSession:
     def get_state(self) -> dict:
         return self._response()
 
+    def get_history(self) -> dict:
+        return {
+            "rounds_played": len(self.history),
+            "history": [
+                {
+                    "results": summary.results,
+                    "hands": summary.hands,
+                    "dealer": summary.dealer,
+                }
+                for summary in self.history
+            ]
+        }
+
     # ── internals ─────────────────────────────────────────────
 
     def _response(self) -> dict:
         return {
-            "balance":       self.balance,
             "rounds_played": len(self.history),
-            "history":       [
-                {
-                    "results": s.results,
-                    "net":     s.net,
-                    "bet":     s.bet,
-                    "hands":   s.hands,
-                    "dealer":  s.dealer,
-                }
-                for s in self.history[-10:]     # send only last 10 rounds
-            ],
             "round": self.current_round.state() if self.current_round else None,
         }
+    
+    
