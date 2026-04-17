@@ -5,18 +5,30 @@ from advisor import calculate_hand, get_advice
 
 # ── card type ─────────────────────────────────────────────────
 class Card(TypedDict):
-    rank: int
-    suit: str
+    rank:         int   # blackjack value: 2-10, 11 (Ace)
+    display_rank: int   # 1 (Ace), 2-10, 11 (J), 12 (Q), 13 (K)
+    suit:         str
 
 # ── infinite shoe ─────────────────────────────────────────────
 _RANKS   = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 _WEIGHTS = [1, 1, 1, 1, 1, 1, 1, 1,  4,  1]
 _SUITS   = ["♠", "♥", "♦", "♣"]
 
+# 10-value cards: 10, J=11, Q=12, K=13 — each equally likely
+_TEN_DISPLAY_RANKS = [10, 11, 12, 13]
+
 def _draw() -> Card:
     rank = random.choices(_RANKS, weights=_WEIGHTS, k=1)[0]
     suit = random.choice(_SUITS)
-    return {"rank": rank, "suit": suit}
+
+    if rank == 11:          # Ace
+        display_rank = 1
+    elif rank == 10:        # 10 / J / Q / K
+        display_rank = random.choice(_TEN_DISPLAY_RANKS)
+    else:
+        display_rank = rank
+
+    return {"rank": rank, "display_rank": display_rank, "suit": suit}
 
 
 # ── single round ──────────────────────────────────────────────
@@ -54,8 +66,8 @@ class BlackjackGame:
 
         elif name == "split":
             c  = hand[0]["rank"]
-            h1 = [{"rank": c, "suit": hand[0]["suit"]}, _draw()]
-            h2 = [{"rank": c, "suit": hand[1]["suit"]}, _draw()]
+            h1 = [{"rank": c, "display_rank": hand[0]["display_rank"], "suit": hand[0]["suit"]}, _draw()]
+            h2 = [{"rank": c, "display_rank": hand[1]["display_rank"], "suit": hand[1]["suit"]}, _draw()]
             self.player_hands[self.current_hand_idx] = h1
             self.player_hands.insert(self.current_hand_idx + 1, h2)
             self.split_in_progress = True
@@ -196,5 +208,3 @@ class PlayerSession:
             "rounds_played": len(self.history),
             "round": self.current_round.state() if self.current_round else None,
         }
-    
-    
