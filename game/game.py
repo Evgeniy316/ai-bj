@@ -67,7 +67,9 @@ class BlackjackGame:
         elif name == "split":
             c  = hand[0]["rank"]
             h1 = [{"rank": c, "display_rank": hand[0]["display_rank"], "suit": hand[0]["suit"]}, _draw()]
-            h2 = [{"rank": c, "display_rank": hand[1]["display_rank"], "suit": hand[1]["suit"]}, _draw()]
+            # h2 intentionally starts with one card; its second card is dealt
+            # in _advance() once the first hand is finished (stand or bust).
+            h2 = [{"rank": c, "display_rank": hand[1]["display_rank"], "suit": hand[1]["suit"]}]
             self.player_hands[self.current_hand_idx] = h1
             self.player_hands.insert(self.current_hand_idx + 1, h2)
             self.split_in_progress = True
@@ -76,6 +78,12 @@ class BlackjackGame:
         self.current_hand_idx += 1
         if self.current_hand_idx >= len(self.player_hands):
             self._resolve()
+        else:
+            # If the next hand is a fresh split hand (only 1 card), deal its second card now
+            # that the previous hand has finished (stood or busted).
+            next_hand = self.player_hands[self.current_hand_idx]
+            if len(next_hand) == 1:
+                next_hand.append(_draw())
 
     def _resolve(self) -> None:
         all_bust = all(calculate_hand(h) > 21 for h in self.player_hands)
@@ -116,9 +124,12 @@ class BlackjackGame:
             return []
         hand    = self.player_hands[self.current_hand_idx]
         actions = ["hit", "stand"]
+        # On a split ace, only one card is allowed — force stand
+        if self.split_in_progress and hand[0]["rank"] == 11 and len(hand) == 2:
+            return ["stand"]
         if len(hand) == 2:
             actions.append("double")
-        if len(hand) == 2 and hand[0]["rank"] == hand[1]["rank"] and not self.split_in_progress:
+        if len(hand) == 2 and hand[0]["display_rank"] == hand[1]["display_rank"] and not self.split_in_progress:
             actions.append("split")
         return actions
 
@@ -139,7 +150,7 @@ class BlackjackGame:
             "current_hand_idx":  self.current_hand_idx if not self.round_over else None,
             "dealer_upcard":     self.dealer_hand[0],
             "dealer_hand":       self.dealer_hand if self.round_over else None,
-            "dealer_total":      calculate_hand(self.dealer_hand) if self.round_over else None,
+            "dealer_total":      calculate_hand(self.dealer_hand) if self.round_over else self.dealer_hand[0]["rank"],
             "split_in_progress": self.split_in_progress,
             "valid_actions":     valid_actions,
             "suggestion":        suggestion,
