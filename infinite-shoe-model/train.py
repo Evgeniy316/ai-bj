@@ -70,7 +70,7 @@ if __name__ == "__main__":
         n_epochs=10,
         gamma=1.0,
         gae_lambda=0.95,
-        clip_range=0.2,
+        clip_range=0.2, 
         ent_coef=0.02,
         policy_kwargs=dict(
     net_arch=dict(pi=[128, 128], 
@@ -78,32 +78,38 @@ if __name__ == "__main__":
     ),
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
-
+   
     timer_callback = EpochTimerCallback()
 
-    eval_callback = MaskableEvalCallback(
-        eval_env,
-        best_model_save_path="./logs/best_model/",
-        log_path="./logs/results/",
-        eval_freq=200_000,
-        n_eval_episodes=5000,
-        deterministic=True,
-        use_masking=True,
-        # reward_threshold=-0.05,
-    )
+    # eval_callback = MaskableEvalCallback(
+    #     eval_env,
+    #     best_model_save_path="./logs/best_model/",
+    #     log_path="./logs/results/",
+    #     eval_freq=200_000,
+    #     n_eval_episodes=5000,
+    #     deterministic=True,
+    #     use_masking=True,
+    #     # reward_threshold=-0.05,
+    # )
 
-    checkpoint_callback = CheckpointCallback(
-        save_freq=100_000,
-        save_path="./logs/checkpoints/",
-        name_prefix="blackjack_model",
-    )
+    # checkpoint_callback = CheckpointCallback(
+    #     save_freq=100_000,
+    #     save_path="./logs/checkpoints/",
+    #     name_prefix="blackjack_model",
+    # )
 
     print("Starting training (infinite-shoe)...")
     entropy_callback = EntropyScheduleCallback(ent_start=0.02, ent_end=0.002)
+    print("POLICY")
+    print(model.policy)
     model.learn(
         total_timesteps=5_000_000,
-        callback=[timer_callback, eval_callback, checkpoint_callback,entropy_callback],
+        # callback=[timer_callback, eval_callback, checkpoint_callback,entropy_callback],
+        callback=[timer_callback, entropy_callback],
     )
 
-    model.save("blackjack_infinite_shoe_model")
+    model.save("blackjack_infinite_shoe_model_test_run")
     print("Training complete.")
+    # П(a| s)old
+    # П(a| s)new
+    # 1 - 0.2; 1+ 0.2

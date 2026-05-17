@@ -28,9 +28,9 @@ class AdvancedBlackjackEnv(gym.Env):
     features carry no information and are omitted.
 
     State (3 elements, all in [0, 1]):
-      [0]  player_sum_norm    – normalised player total        (4–21 → 0–1)
-      [1]  dealer_upcard_norm – normalised dealer up-card      (2–11 → 0–1)
-      [2]  usable_ace         – 1.0 if player has a usable ace, else 0.0
+      [0]  player_sum_norm    - normalised player total        (4-21 → 0-1)
+      [1]  dealer_upcard_norm - normalised dealer up-card      (2-11 → 0-1)
+      [2]  usable_ace         - 1.0 if player has a usable ace, else 0.0
 
     Actions: 0=Stand  1=Hit  2=Double Down  3=Split
     """
@@ -66,31 +66,19 @@ class AdvancedBlackjackEnv(gym.Env):
         player_sum_norm    = (player_sum    - 4)  / (21 - 4)
         dealer_upcard_norm = (dealer_upcard - 2)  / (11 - 2)
 
-        is_pair        = 0.0
-        pair_card_norm = 0.0
-            # Encode the pair card in a way that reflects basic strategy groupings
-        # rather than a linear scale
-        pair_buckets = {
-            2: 0.1, 3: 0.2,    # split vs 2-7
-            4: 0.3,             # split only vs 5-6
-            5: 0.0,             # NEVER split (treat as 10)
-            6: 0.5, 7: 0.6,    # split vs 2-6 / 2-7
-            8: 1.0,             # ALWAYS split
-            9: 0.8,             # split vs 2-6, 8-9
-            10: 0.0,            # NEVER split
-            11: 0.9,            # ALWAYS split
-        }
-        if (len(self.player_hand) == 2
-                and self.player_hand[0] == self.player_hand[1]
-                and not self.split_in_progress):
-            is_pair = 1.0
-            pair_card_norm = pair_buckets.get(self.player_hand[0], 0.0)
+        if len(self.player_hand) == 2:
+            card1_norm = (self.player_hand[0] - 2) / (11 - 2)
+            card2_norm = (self.player_hand[1] - 2) / (11 - 2)
+        else:
+            card1_norm = 0.0
+            card2_norm = 0.
+
 
         hand_size_norm = 0.0 if len(self.player_hand) == 2 else 1.0
 
         return np.array(
             [player_sum_norm, dealer_upcard_norm, usable_ace,
-            is_pair, pair_card_norm, hand_size_norm],
+            card1_norm, card2_norm, hand_size_norm],
             dtype=np.float32
         )
 

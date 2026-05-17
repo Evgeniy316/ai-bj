@@ -125,8 +125,8 @@ class BlackjackGame:
         hand    = self.player_hands[self.current_hand_idx]
         actions = ["hit", "stand"]
         # On a split ace, only one card is allowed — force stand
-        if self.split_in_progress and hand[0]["rank"] == 11 and len(hand) == 2:
-            return ["stand"]
+        # if self.split_in_progress and hand[0]["rank"] == 11 and len(hand) == 2:
+        #     return ["stand"]
         if len(hand) == 2:
             actions.append("double")
         if len(hand) == 2 and hand[0]["display_rank"] == hand[1]["display_rank"] and not self.split_in_progress:

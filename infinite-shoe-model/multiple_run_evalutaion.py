@@ -20,8 +20,9 @@ from tqdm import tqdm
 #  CONFIG  (edit these)
 # ─────────────────────────────────────────────
 MODEL_PATH = "blackjack_infinite_shoe_model.zip"
-NUM_RUNS = 5              # concurrent runs (one run = one worker process)
-EPISODES_PER_RUN = 100_000
+# MODEL_PATH = "logs/checkpoints/blackjack_model_800000_steps.zip"
+NUM_RUNS = 5             # concurrent runs (one run = one worker process)
+EPISODES_PER_RUN = 150_000
 CPU_HARD_CAP_PERCENT = 50  # total CPU cap for the whole process tree
 # ─────────────────────────────────────────────
 
