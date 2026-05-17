@@ -16,7 +16,7 @@ sessions: dict[str, PlayerSession] = {}
 # ── startup / shutdown ────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    advisor.load_model("blackjack_infinite_shoe_model_60m.zip")
+    advisor.load_model("blackjack_model_22400000_steps.zip")
     print("Model loaded.")
     yield
     sessions.clear()

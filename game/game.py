@@ -2,6 +2,7 @@ import random
 from dataclasses import dataclass
 from typing import TypedDict
 from advisor import calculate_hand, get_advice
+from basic_strategy import get_strategy
 
 # ── card type ─────────────────────────────────────────────────
 class Card(TypedDict):
@@ -136,12 +137,14 @@ class BlackjackGame:
     def state(self) -> dict:
         if self.round_over:
             suggestion    = None
+            strategy      = None
             valid_actions = []
         else:
             active_hand   = self.player_hands[self.current_hand_idx]
             active_ranks  = [card["rank"] for card in active_hand]
             dealer_upcard = self.dealer_hand[0]["rank"]
             suggestion    = get_advice(active_ranks, dealer_upcard, self.split_in_progress)
+            strategy      = get_strategy(active_ranks, dealer_upcard, self.split_in_progress)
             valid_actions = self._valid_actions()
 
         return {
@@ -154,6 +157,7 @@ class BlackjackGame:
             "split_in_progress": self.split_in_progress,
             "valid_actions":     valid_actions,
             "suggestion":        suggestion,
+            "strategy":          strategy,
             "round_over":        self.round_over,
             "results":           self.results if self.round_over else None,
         }
