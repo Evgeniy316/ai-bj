@@ -8,16 +8,59 @@ import random
 # Card distribution for an infinite shoe.
 # Ranks: 2-9 (one denomination each = 1/13), 10-value (4 denominations = 4/13),
 # Ace (one denomination = 1/13).
+#
+# Cards are stored as (rank_id, value) tuples:
+#   rank_id : 0-12  (unique rank identifier — used for split matching)
+#   value   : 2-11  (used for hand calculation)
+#
+# rank_id mapping:
+#   0  -> 2   (value 2)
+#   1  -> 3   (value 3)
+#   ...
+#   7  -> 9   (value 9)
+#   8  -> 10  (value 10)   <- Ten
+#   9  -> J   (value 10)   <- Jack
+#   10 -> Q   (value 10)   <- Queen
+#   11 -> K   (value 10)   <- King
+#   12 -> A   (value 11)   <- Ace
+#
+# Weights reflect the fact that 10/J/Q/K each have the same probability
+# (4 denominations out of 52, i.e. 4/13 combined → 1/13 each).
 # ---------------------------------------------------------------------------
-_RANKS       = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-_WEIGHTS     = [1, 1, 1, 1, 1, 1, 1, 1,  4,  1]   # 10-value cards are 4× as likely
-_TOTAL_WEIGHT = sum(_WEIGHTS)
-_PROBS       = [w / _TOTAL_WEIGHT for w in _WEIGHTS]
+
+# 13 distinct ranks, each equally likely (1/13)
+_RANK_IDS = list(range(13))
+_RANK_WEIGHTS = [1] * 13   # uniform — each rank is 1/13
+
+def _rank_to_value(rank_id: int) -> int:
+    """Convert a rank_id (0-12) to its blackjack card value."""
+    if rank_id <= 7:
+        return rank_id + 2   # 2-9
+    elif rank_id <= 11:
+        return 10             # 10, J, Q, K
+    else:
+        return 11             # Ace
 
 
-def _draw_infinite() -> int:
-    """Draw one card from an infinite shoe (uniform over 13 denominations)."""
-    return random.choices(_RANKS, weights=_WEIGHTS, k=1)[0]
+def _draw_infinite() -> tuple[int, int]:
+    """
+    Draw one card from an infinite shoe.
+    Returns (rank_id, value):
+      rank_id — unique rank (0-12), used for split pairing.
+      value   — blackjack value (2-11), used for hand calculation.
+    """
+    rank_id = random.choices(_RANK_IDS, weights=_RANK_WEIGHTS, k=1)[0]
+    return (rank_id, _rank_to_value(rank_id))
+
+
+def _card_value(card: tuple[int, int]) -> int:
+    """Extract the blackjack value from a (rank_id, value) card tuple."""
+    return card[1]
+
+
+def _card_rank(card: tuple[int, int]) -> int:
+    """Extract the rank_id from a (rank_id, value) card tuple."""
+    return card[0]
 
 
 class AdvancedBlackjackEnv(gym.Env):
@@ -27,10 +70,17 @@ class AdvancedBlackjackEnv(gym.Env):
     Because every draw is i.i.d. from a fixed distribution, card-counting
     features carry no information and are omitted.
 
-    State (3 elements, all in [0, 1]):
+    Cards are stored as (rank_id, value) tuples so that the split logic
+    correctly requires identical ranks (e.g. K+K), not merely identical
+    values (e.g. K+Q would NOT be a valid split pair).
+
+    State (6 elements, all in [0, 1]):
       [0]  player_sum_norm    - normalised player total        (4-21 → 0-1)
       [1]  dealer_upcard_norm - normalised dealer up-card      (2-11 → 0-1)
       [2]  usable_ace         - 1.0 if player has a usable ace, else 0.0
+      [3]  card1_norm         - normalised value of 1st card   (2-11 → 0-1)
+      [4]  card2_norm         - normalised value of 2nd card   (2-11 → 0-1)
+      [5]  hand_size_norm     - 0.0 if exactly 2 cards, else 1.0
 
     Actions: 0=Stand  1=Hit  2=Double Down  3=Split
     """
@@ -40,14 +90,14 @@ class AdvancedBlackjackEnv(gym.Env):
     def __init__(self):
         super().__init__()
 
-        self.action_space      = spaces.Discrete(4)
+        self.action_space = spaces.Discrete(4)
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(6,), dtype=np.float32
         )
 
         # Hand / split bookkeeping
-        self.player_hand: list[int] = []
-        self.dealer_hand: list[int] = []
+        self.player_hand: list[tuple[int, int]] = []
+        self.dealer_hand: list[tuple[int, int]] = []
 
         self.split_in_progress  = False
         self.hands: list | None  = None
@@ -60,25 +110,24 @@ class AdvancedBlackjackEnv(gym.Env):
 
     def _get_state(self) -> np.ndarray:
         player_sum    = self._calculate_hand(self.player_hand)
-        dealer_upcard = self.dealer_hand[0]
+        dealer_upcard = _card_value(self.dealer_hand[0])
         usable_ace    = 1.0 if self._has_usable_ace(self.player_hand) else 0.0
 
         player_sum_norm    = (player_sum    - 4)  / (21 - 4)
         dealer_upcard_norm = (dealer_upcard - 2)  / (11 - 2)
 
         if len(self.player_hand) == 2:
-            card1_norm = (self.player_hand[0] - 2) / (11 - 2)
-            card2_norm = (self.player_hand[1] - 2) / (11 - 2)
+            card1_norm = (_card_value(self.player_hand[0]) - 2) / (11 - 2)
+            card2_norm = (_card_value(self.player_hand[1]) - 2) / (11 - 2)
         else:
             card1_norm = 0.0
-            card2_norm = 0.
-
+            card2_norm = 0.0
 
         hand_size_norm = 0.0 if len(self.player_hand) == 2 else 1.0
 
         return np.array(
             [player_sum_norm, dealer_upcard_norm, usable_ace,
-            card1_norm, card2_norm, hand_size_norm],
+             card1_norm, card2_norm, hand_size_norm],
             dtype=np.float32
         )
 
@@ -93,7 +142,7 @@ class AdvancedBlackjackEnv(gym.Env):
             valid[2] = 1                                      # Double Down
         if (
             len(self.player_hand) == 2
-            and self.player_hand[0] == self.player_hand[1]
+            and _card_rank(self.player_hand[0]) == _card_rank(self.player_hand[1])  # same rank (not just same value)
             and not self.split_in_progress
         ):
             valid[3] = 1                                      # Split (no re-split)
@@ -221,14 +270,14 @@ class AdvancedBlackjackEnv(gym.Env):
             terminated = True
 
         elif action == 3:                                     # Split
-            c1, c2       = self.player_hand
-            h1           = [c1, _draw_infinite()]
-            h2           = [c2, _draw_infinite()]
-            self.hands   = [h1, h2]
-            self.hand_bets          = [1.0, 1.0]
-            self.split_in_progress  = True
-            self.current_hand_idx   = 0
-            self.player_hand        = self.hands[0]
+            c1, c2      = self.player_hand
+            h1          = [c1, _draw_infinite()]
+            h2          = [c2, _draw_infinite()]
+            self.hands  = [h1, h2]
+            self.hand_bets         = [1.0, 1.0]
+            self.split_in_progress = True
+            self.current_hand_idx  = 0
+            self.player_hand       = self.hands[0]
 
         return (
             self._get_state(),
@@ -256,22 +305,23 @@ class AdvancedBlackjackEnv(gym.Env):
     # Hand helpers
     # ------------------------------------------------------------------
 
-    def _calculate_hand(self, hand: list[int]) -> int:
+    def _calculate_hand(self, hand: list[tuple[int, int]]) -> int:
         total = aces = 0
-        for c in hand:
-            if c == 11:
+        for card in hand:
+            v = _card_value(card)
+            if v == 11:
                 aces  += 1
                 total += 11
             else:
-                total += c
+                total += v
         while total > 21 and aces > 0:
             total -= 10
             aces  -= 1
         return total
 
-    def _has_usable_ace(self, hand: list[int]) -> bool:
-        total_low = sum(1 if c == 11 else c for c in hand)
-        num_aces  = sum(1 for c in hand if c == 11)
+    def _has_usable_ace(self, hand: list[tuple[int, int]]) -> bool:
+        total_low = sum(1 if _card_value(c) == 11 else _card_value(c) for c in hand)
+        num_aces  = sum(1 for c in hand if _card_value(c) == 11)
         return num_aces > 0 and total_low + 10 <= 21
 
     def _dealer_play(self) -> int:
@@ -282,7 +332,7 @@ class AdvancedBlackjackEnv(gym.Env):
 
     def _compare_hand_against_dealer(
         self,
-        player_hand: list[int],
+        player_hand: list[tuple[int, int]],
         dealer_total: int,
         is_split: bool = False,
     ) -> float:
@@ -294,8 +344,8 @@ class AdvancedBlackjackEnv(gym.Env):
                 return 0.0   # Both natural — push
             return 1.5       # 3:2 payout
 
-        if player_total > 21:   return -1.0
-        if dealer_total > 21:   return  1.0
-        if player_total > dealer_total: return  1.0
+        if player_total > 21:            return -1.0
+        if dealer_total > 21:            return  1.0
+        if player_total > dealer_total:  return  1.0
         if player_total == dealer_total: return  0.0
         return -1.0
