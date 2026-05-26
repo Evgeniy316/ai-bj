@@ -324,6 +324,7 @@ class AdvancedBlackjackEnv(gym.Env):
         num_aces  = sum(1 for c in hand if _card_value(c) == 11)
         return num_aces > 0 and total_low + 10 <= 21
 
+
     def _dealer_play(self) -> int:
         """Dealer hits on soft 16 and below, stands on hard/soft 17+."""
         while self._calculate_hand(self.dealer_hand) < 17:

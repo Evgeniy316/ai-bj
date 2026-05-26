@@ -21,7 +21,6 @@ def calculate_hand(hand: list) -> int:
     """Calculate hand value. Accepts list of Card dicts or list of ints (ranks)."""
     total, aces = 0, 0
     for card in hand:
-        # Handle both Card dict and raw int
         value = card["rank"] if isinstance(card, dict) else card
         if value == 11:
             aces += 1
@@ -46,6 +45,20 @@ def has_usable_ace(hand: list) -> bool:
     return num_aces > 0 and total_low + 10 <= 21
 
 
+def _split_rank(card) -> int:
+    """
+    Return the identifier used to decide whether two cards form a valid split pair.
+
+    - Card dict  → display_rank (1=Ace, 2-10, 11=J, 12=Q, 13=K).
+                   This mirrors model.py's rank_id logic: K and Q have different
+                   display_ranks, so they are NOT a pair despite sharing value 10.
+    - Plain int  → the int itself (used by ai_test.py / evaluation scripts).
+    """
+    if isinstance(card, dict):
+        return card["display_rank"]
+    return card
+
+
 def _build_obs(player_hand: list, dealer_upcard: int, split_in_progress: bool) -> np.ndarray:
     """Build observation for model. player_hand can be Card dicts or ints."""
     player_sum = calculate_hand(player_hand)
@@ -54,12 +67,11 @@ def _build_obs(player_hand: list, dealer_upcard: int, split_in_progress: bool) -
     is_pair        = 0.0
     pair_card_norm = 0.0
     if len(player_hand) == 2 and not split_in_progress:
-        # Extract ranks for comparison
-        rank1 = player_hand[0]["rank"] if isinstance(player_hand[0], dict) else player_hand[0]
-        rank2 = player_hand[1]["rank"] if isinstance(player_hand[1], dict) else player_hand[1]
-        if rank1 == rank2:
+        # Use display_rank so K+Q is NOT treated as a pair
+        if _split_rank(player_hand[0]) == _split_rank(player_hand[1]):
             is_pair        = 1.0
-            pair_card_norm = PAIR_BUCKETS.get(rank1, 0.0)
+            rank_value     = player_hand[0]["rank"] if isinstance(player_hand[0], dict) else player_hand[0]
+            pair_card_norm = PAIR_BUCKETS.get(rank_value, 0.0)
 
     hand_size_norm = 0.0 if len(player_hand) == 2 else 1.0
 
@@ -77,13 +89,11 @@ def _build_mask(player_hand: list, split_in_progress: bool) -> np.ndarray:
     """Build action mask. player_hand can be Card dicts or ints."""
     mask = [True, True, False, False]
     if len(player_hand) == 2:
-        mask[2] = True
+        mask[2] = True                                        # Double Down
         if not split_in_progress:
-            # Extract ranks for comparison
-            rank1 = player_hand[0]["rank"] if isinstance(player_hand[0], dict) else player_hand[0]
-            rank2 = player_hand[1]["rank"] if isinstance(player_hand[1], dict) else player_hand[1]
-            if rank1 == rank2:
-                mask[3] = True
+            # Use display_rank so K+Q is NOT masked as a valid split
+            if _split_rank(player_hand[0]) == _split_rank(player_hand[1]):
+                mask[3] = True                                # Split
     return np.array(mask, dtype=bool)
 
 

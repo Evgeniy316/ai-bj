@@ -113,14 +113,26 @@ else:
         return None
 
 
-def calculate_hand_value(hand):
+def _card_value(card) -> int:
+    """Extract blackjack value from a (rank_id, value) tuple or a plain int."""
+    return card[1] if isinstance(card, tuple) else card
+
+
+def _card_rank(card) -> int:
+    """Extract rank_id from a (rank_id, value) tuple or a plain int (treated as its own rank)."""
+    return card[0] if isinstance(card, tuple) else card
+
+
+def calculate_hand_value(hand) -> int:
+    """Calculate hand value. Accepts lists of (rank_id, value) tuples or plain ints."""
     total, aces = 0, 0
     for card in hand:
-        if card == 11:
+        value = _card_value(card)
+        if value == 11:
             aces += 1
             total += 11
         else:
-            total += card
+            total += value
     while total > 21 and aces > 0:
         total -= 10
         aces -= 1
@@ -168,7 +180,7 @@ def run_episodes(args):
     ):
         obs, _ = env.reset()
         done = False
-        initial_hand = list(env.player_hand)
+        initial_hand = list(env.player_hand)   # list of (rank_id, value) tuples
 
         while not done:
             masks = env.action_masks()
@@ -183,11 +195,13 @@ def run_episodes(args):
 
             if action_map.get(action) == "Split":
                 stats["total_splits"] += 1
-                if len(initial_hand) == 2 and initial_hand[0] == initial_hand[1]:
-                    if initial_hand[0] == 11:
+                # Compare by rank_id — K+Q are now correctly NOT a pair
+                if len(initial_hand) == 2 and _card_rank(initial_hand[0]) == _card_rank(initial_hand[1]):
+                    if _card_value(initial_hand[0]) == 11:   # Ace (value == 11)
                         stats["ace_splits"] += 1
                     else:
-                        key = f"{initial_hand[0]}-{initial_hand[1]}"
+                        v = _card_value(initial_hand[0])
+                        key = f"{v}-{v}"
                         stats["non_ace_split_pairs"][key] = (
                             stats["non_ace_split_pairs"].get(key, 0) + 1
                         )

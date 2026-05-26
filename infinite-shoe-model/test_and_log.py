@@ -1,9 +1,11 @@
 import csv
+import pandas as pd
 import gymnasium as gym
 import numpy as np
 from sb3_contrib import MaskablePPO
 from model import AdvancedBlackjackEnv
 from tqdm import tqdm
+
 
 def safe_int_action(action):
     """Convert action (possibly np.ndarray) to plain int safely."""
@@ -14,20 +16,31 @@ def safe_int_action(action):
     except Exception:
         return int(np.squeeze(action).item())
 
-def calculate_hand_value(hand):
-    """Calculate the value of a blackjack hand."""
-    total = 0
-    aces = 0
+
+def _card_value(card) -> int:
+    """Extract blackjack value from a (rank_id, value) tuple or a plain int."""
+    return card[1] if isinstance(card, tuple) else card
+
+
+def calculate_hand_value(hand) -> int:
+    """Calculate hand value. Accepts lists of (rank_id, value) tuples or plain ints."""
+    total, aces = 0, 0
     for card in hand:
-        if card == 11:
+        value = _card_value(card)
+        if value == 11:
             aces += 1
             total += 11
         else:
-            total += card
+            total += value
     while total > 21 and aces > 0:
         total -= 10
         aces -= 1
     return total
+
+
+def _hand_str(hand) -> str:
+    """Human-readable hand string showing only card values."""
+    return str([_card_value(c) for c in hand])
 
 
 def test_and_save_logs(model_path, num_episodes=50000, output_file="blackjack_logs.csv"):
@@ -53,15 +66,13 @@ def test_and_save_logs(model_path, num_episodes=50000, output_file="blackjack_lo
             done = False
 
             # ---- Capture initial hand ----
-            initial_hand_str = str(env.player_hand)
-            initial_total = calculate_hand_value(env.player_hand)
+            initial_hand_str = _hand_str(env.player_hand)
+            initial_total    = calculate_hand_value(env.player_hand)
             # ------------------------------
 
-            # For logging, we'll compute the correct initial total
-            # (this column will be overwritten with final total later)
-            dealer_card = round(obs[1] * 11)
-            usable_ace = int(obs[2])
-            counts = obs[3:13]
+            dealer_card = round(obs[1] * 9) + 2   # dealer_upcard_norm = (v-2)/9
+            usable_ace  = int(obs[2])
+            counts      = obs[3:13]
 
             episode_actions = []
 
@@ -74,7 +85,7 @@ def test_and_save_logs(model_path, num_episodes=50000, output_file="blackjack_lo
                     action_masks_to_pass = action_masks
 
                 action, _ = model.predict(obs, action_masks=action_masks_to_pass, deterministic=True)
-                action = safe_int_action(action)
+                action    = safe_int_action(action)
 
                 action_map = {0: "Stand", 1: "Hit", 2: "Double", 3: "Split"}
                 action_str = action_map.get(action, f"Action_{action}")
@@ -86,22 +97,20 @@ def test_and_save_logs(model_path, num_episodes=50000, output_file="blackjack_lo
 
             # ---- After episode finishes, capture final hand(s) and total ----
             if env.split_in_progress:
-                # Multiple split hands
-                final_hands = env.hands
-                final_hands_str = " | ".join(str(hand) for hand in final_hands)
-                # For Player_Total, show total of each hand separated by " | "
-                final_totals = [calculate_hand_value(h) for h in final_hands]
+                final_hands      = env.hands
+                final_hands_str  = " | ".join(_hand_str(h) for h in final_hands)
+                final_totals     = [calculate_hand_value(h) for h in final_hands]
                 player_total_str = " | ".join(str(t) for t in final_totals)
             else:
-                final_hands_str = str(env.player_hand)
+                final_hands_str  = _hand_str(env.player_hand)
                 player_total_str = str(calculate_hand_value(env.player_hand))
             # -----------------------------------------------------------------
 
-            # Dealer info
-            dealer_full_hand = env.dealer_hand.copy()
-            dealer_total = calculate_hand_value(dealer_full_hand)
-            dealer_hand_size = len(dealer_full_hand)
-            dealer_hand_str = str(dealer_full_hand)
+            # Dealer info — env.dealer_hand is now a list of (rank_id, value) tuples
+            dealer_full_hand  = env.dealer_hand.copy()
+            dealer_total      = calculate_hand_value(dealer_full_hand)
+            dealer_hand_size  = len(dealer_full_hand)
+            dealer_hand_str   = _hand_str(dealer_full_hand)
 
             # Determine result string
             if reward == 1.5:
@@ -114,14 +123,14 @@ def test_and_save_logs(model_path, num_episodes=50000, output_file="blackjack_lo
                 result = "Push"
 
             actions_taken = " -> ".join(episode_actions)
-            counts_list = [float(x) for x in counts]
+            counts_list   = [float(x) for x in counts]
 
             # Write row
             writer.writerow([
                 ep,
                 initial_hand_str,
                 initial_total,
-                player_total_str,          # now final total(s)
+                player_total_str,
                 dealer_card,
                 usable_ace,
                 actions_taken,
@@ -135,7 +144,7 @@ def test_and_save_logs(model_path, num_episodes=50000, output_file="blackjack_lo
             ])
 
     print(f"\nDone! File saved as {output_file}")
-    
+
     # Print some statistics about dealer hands
     print("\nDealer Hand Statistics:")
     df = pd.read_csv(output_file)
@@ -144,9 +153,7 @@ def test_and_save_logs(model_path, num_episodes=50000, output_file="blackjack_lo
     print(f"Dealer bust rate: {(df['Dealer_Total'] > 21).mean():.1%}")
     print(f"Dealer blackjack rate: {((df['Dealer_Total'] == 21) & (df['Dealer_Hand_Size'] == 2)).mean():.1%}")
 
+
 if __name__ == "__main__":
-    import pandas as pd  # Add this import at the top
     # test_and_save_logs("blackjack_infinite_shoe_model.zip")
     test_and_save_logs("../../../blackjack_infinite_shoe_model.zip")
-
-    # ..\..\blackjack_infinite_shoe_model.zip

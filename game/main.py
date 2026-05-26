@@ -11,12 +11,14 @@ from game import PlayerSession
 
 # ── session store ─────────────────────────────────────────────
 sessions: dict[str, PlayerSession] = {}
-
+# uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
 
 # ── startup / shutdown ────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print("MODEL NOT LOADED")
     advisor.load_model("blackjack_model_22400000_steps.zip")
+    print("MODEL LOADED")
     print("Model loaded.")
     yield
     sessions.clear()
@@ -85,7 +87,7 @@ def get_state(body: SessionRequest):
     return session.get_state()
 
 
-@app.delete("/session", summary="End the session")
+@app.post("/session", summary="End the session")
 def delete_session(body: SessionRequest):
     sessions.pop(body.session_id, None)
     return {"ok": True}

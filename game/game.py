@@ -130,7 +130,12 @@ class BlackjackGame:
         #     return ["stand"]
         if len(hand) == 2:
             actions.append("double")
-        if len(hand) == 2 and hand[0]["display_rank"] == hand[1]["display_rank"] and not self.split_in_progress:
+        # Split requires identical display_rank (e.g. K+Q is NOT a valid pair)
+        if (
+            len(hand) == 2
+            and hand[0]["display_rank"] == hand[1]["display_rank"]
+            and not self.split_in_progress
+        ):
             actions.append("split")
         return actions
 
@@ -141,10 +146,12 @@ class BlackjackGame:
             valid_actions = []
         else:
             active_hand   = self.player_hands[self.current_hand_idx]
-            active_ranks  = [card["rank"] for card in active_hand]
             dealer_upcard = self.dealer_hand[0]["rank"]
-            suggestion    = get_advice(active_ranks, dealer_upcard, self.split_in_progress)
-            strategy      = get_strategy(active_ranks, dealer_upcard, self.split_in_progress)
+
+            # Pass the full Card dicts so advisor and basic_strategy can use
+            # display_rank for the split check (K+Q should NOT be a pair).
+            suggestion    = get_advice(active_hand, dealer_upcard, self.split_in_progress)
+            strategy      = get_strategy(active_hand, dealer_upcard, self.split_in_progress)
             valid_actions = self._valid_actions()
 
         return {
