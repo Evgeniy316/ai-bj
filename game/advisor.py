@@ -64,23 +64,27 @@ def _build_obs(player_hand: list, dealer_upcard: int, split_in_progress: bool) -
     player_sum = calculate_hand(player_hand)
     usable_ace = 1.0 if has_usable_ace(player_hand) else 0.0
 
-    is_pair        = 0.0
-    pair_card_norm = 0.0
-    if len(player_hand) == 2 and not split_in_progress:
-        # Use display_rank so K+Q is NOT treated as a pair
-        if _split_rank(player_hand[0]) == _split_rank(player_hand[1]):
-            is_pair        = 1.0
-            rank_value     = player_hand[0]["rank"] if isinstance(player_hand[0], dict) else player_hand[0]
-            pair_card_norm = PAIR_BUCKETS.get(rank_value, 0.0)
+    player_sum_norm    = (player_sum    - 4) / (21 - 4)
+    dealer_upcard_norm = (dealer_upcard - 2) / (11 - 2)
+
+    # Extract card values for normalization
+    if len(player_hand) == 2:
+        card1_value = player_hand[0]["rank"] if isinstance(player_hand[0], dict) else player_hand[0]
+        card2_value = player_hand[1]["rank"] if isinstance(player_hand[1], dict) else player_hand[1]
+        card1_norm = (card1_value - 2) / (11 - 2)
+        card2_norm = (card2_value - 2) / (11 - 2)
+    else:
+        card1_norm = 0.0
+        card2_norm = 0.0
 
     hand_size_norm = 0.0 if len(player_hand) == 2 else 1.0
 
     return np.array([
-        (player_sum    - 4) / 17.0,
-        (dealer_upcard - 2) /  9.0,
+        player_sum_norm,
+        dealer_upcard_norm,
         usable_ace,
-        is_pair,
-        pair_card_norm,
+        card1_norm,
+        card2_norm,
         hand_size_norm,
     ], dtype=np.float32)
 

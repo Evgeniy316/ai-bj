@@ -17,7 +17,7 @@ sessions: dict[str, PlayerSession] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("MODEL NOT LOADED")
-    advisor.load_model("blackjack_model_22400000_steps.zip")
+    advisor.load_model("blackjack_model_28000000_steps.zip")
     print("MODEL LOADED")
     print("Model loaded.")
     yield
